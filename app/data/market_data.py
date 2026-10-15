@@ -1,13 +1,11 @@
 """
 Market data provider – simulated realistic data for demo
-(Can be swapped for live yfinance later)
+Includes short price history for charts.
 """
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import random
-from datetime import datetime
 
 
-# Deterministic-ish simulated snapshots (seeded for reproducibility)
 SIMULATED_MARKET = {
     "RELIANCE.NS": {
         "last_price": 2950.40,
@@ -17,6 +15,7 @@ SIMULATED_MARKET = {
         "volume_ratio": 1.45,
         "sector": "Energy",
         "company_name": "Reliance Industries",
+        "history": [2780, 2810, 2795, 2840, 2885, 2910, 2895, 2920, 2945, 2950.40],
     },
     "TCS.NS": {
         "last_price": 3850.20,
@@ -26,6 +25,7 @@ SIMULATED_MARKET = {
         "volume_ratio": 0.92,
         "sector": "IT",
         "company_name": "Tata Consultancy Services",
+        "history": [3720, 3755, 3780, 3800, 3825, 3840, 3865, 3870, 3860, 3850.20],
     },
     "INFY.NS": {
         "last_price": 1780.50,
@@ -35,6 +35,7 @@ SIMULATED_MARKET = {
         "volume_ratio": 1.85,
         "sector": "IT",
         "company_name": "Infosys",
+        "history": [1650, 1675, 1690, 1710, 1725, 1740, 1755, 1768, 1772, 1780.50],
     },
     "HDFCBANK.NS": {
         "last_price": 1680.00,
@@ -44,6 +45,7 @@ SIMULATED_MARKET = {
         "volume_ratio": 1.60,
         "sector": "Banking",
         "company_name": "HDFC Bank",
+        "history": [1750, 1735, 1720, 1710, 1705, 1695, 1690, 1700, 1695, 1680.00],
     },
     "ICICIBANK.NS": {
         "last_price": 1120.75,
@@ -53,6 +55,7 @@ SIMULATED_MARKET = {
         "volume_ratio": 1.15,
         "sector": "Banking",
         "company_name": "ICICI Bank",
+        "history": [1080, 1090, 1095, 1105, 1110, 1115, 1118, 1122, 1119, 1120.75],
     },
 }
 
@@ -113,7 +116,6 @@ def get_market_snapshot(symbols: Optional[list[str]] = None) -> Dict[str, Any]:
         if s in SIMULATED_MARKET:
             data[s] = SIMULATED_MARKET[s].copy()
         else:
-            # generate random fallback
             data[s] = {
                 "last_price": round(random.uniform(500, 4000), 2),
                 "change_1d_pct": round(random.uniform(-3, 3), 2),
@@ -122,6 +124,7 @@ def get_market_snapshot(symbols: Optional[list[str]] = None) -> Dict[str, Any]:
                 "volume_ratio": round(random.uniform(0.7, 2.2), 2),
                 "sector": "Unknown",
                 "company_name": s,
+                "history": [round(random.uniform(500, 4000), 2) for _ in range(10)],
             }
     return data
 
@@ -144,3 +147,7 @@ def get_sentiment_snapshot(symbols: Optional[list[str]] = None) -> Dict[str, Any
 
 def get_company_name(symbol: str) -> str:
     return SIMULATED_MARKET.get(symbol, {}).get("company_name", symbol)
+
+
+def get_price_history(symbol: str) -> List[float]:
+    return SIMULATED_MARKET.get(symbol, {}).get("history", [])

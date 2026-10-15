@@ -1,21 +1,29 @@
 """
-VibeFinance – Interactive Financial Intelligence Dashboard
+VibeFinance – Flashy Multi-Agent Financial Intelligence Dashboard
 Run: streamlit run app/main.py
 """
 import streamlit as st
 import asyncio
+import time
 import sys
 from pathlib import Path
+from datetime import datetime, timedelta
 
-# Ensure project root is on path
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.pipeline import VibeFinancePipeline
 from app.user.profiles import get_demo_profiles
-from app.data.market_data import get_market_snapshot
+from app.data.market_data import get_market_snapshot, get_price_history
 from app.agents.schemas import SignalLabel
+
+try:
+    import plotly.graph_objects as go
+    import plotly.express as px
+    HAS_PLOTLY = True
+except ImportError:
+    HAS_PLOTLY = False
 
 st.set_page_config(
     page_title="VibeFinance | Multi-Agent Intelligence",
@@ -24,20 +32,65 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Custom CSS
+# ── Dark finance theme CSS ──────────────────────────────────
 st.markdown("""
 <style>
-    .signal-bullish { color: #00c853; font-weight: 700; }
-    .signal-bearish { color: #ff1744; font-weight: 700; }
-    .signal-neutral { color: #ffab00; font-weight: 700; }
-    .signal-mixed { color: #7c4dff; font-weight: 700; }
-    .agent-card { padding: 1rem; border-radius: 0.5rem; border: 1px solid #333; margin-bottom: 0.8rem; }
-    .citation { font-size: 0.85rem; background: #1e1e1e; padding: 0.6rem; border-radius: 0.3rem; margin: 0.3rem 0; }
+    .stApp { background: linear-gradient(160deg, #0b0f19 0%, #111827 50%, #0f172a 100%); }
+    .block-container { padding-top: 1.2rem; }
+    h1, h2, h3, h4 { color: #e2e8f0 !important; }
+    .console-box {
+        background: #020617;
+        border: 1px solid #1e293b;
+        border-radius: 10px;
+        padding: 14px 16px;
+        font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+        font-size: 0.82rem;
+        color: #94a3b8;
+        max-height: 260px;
+        overflow-y: auto;
+        line-height: 1.55;
+    }
+    .console-ok { color: #4ade80; }
+    .console-warn { color: #fbbf24; }
+    .console-err { color: #f87171; }
+    .console-info { color: #38bdf8; }
+    .console-dim { color: #64748b; }
+    .agent-card {
+        background: #0f172a;
+        border: 1px solid #1e293b;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 8px;
+    }
+    .signal-bullish { color: #4ade80; font-weight: 800; letter-spacing: 0.5px; }
+    .signal-bearish { color: #f87171; font-weight: 800; letter-spacing: 0.5px; }
+    .signal-neutral { color: #fbbf24; font-weight: 800; letter-spacing: 0.5px; }
+    .signal-mixed { color: #a78bfa; font-weight: 800; letter-spacing: 0.5px; }
+    .kpi {
+        background: #0f172a;
+        border: 1px solid #1e293b;
+        border-radius: 12px;
+        padding: 14px 16px;
+        text-align: center;
+    }
+    .kpi-label { color: #94a3b8; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 1px; }
+    .kpi-value { color: #f1f5f9; font-size: 1.45rem; font-weight: 700; margin-top: 4px; }
+    .citation {
+        font-size: 0.82rem;
+        background: #020617;
+        border-left: 3px solid #38bdf8;
+        padding: 10px 12px;
+        border-radius: 0 8px 8px 0;
+        margin: 6px 0;
+        color: #cbd5e1;
+    }
+    div[data-testid="stMetricValue"] { color: #f1f5f9 !important; }
+    div[data-testid="stMetricLabel"] { color: #94a3b8 !important; }
 </style>
 """, unsafe_allow_html=True)
 
 
-def signal_color(sig: str) -> str:
+def signal_class(sig: str) -> str:
     return {
         "bullish": "signal-bullish",
         "bearish": "signal-bearish",
@@ -46,25 +99,172 @@ def signal_color(sig: str) -> str:
     }.get(sig.lower(), "signal-neutral")
 
 
+def signal_emoji(sig: str) -> str:
+    return {"bullish": "🟢", "bearish": "🔴", "neutral": "🟡", "mixed": "🟣"}.get(sig.lower(), "⚪")
+
+
 @st.cache_resource
 def get_pipeline():
     return VibeFinancePipeline()
 
 
+def make_price_chart(symbol: str, history: list):
+    if not HAS_PLOTLY or not history:
+        return None
+    days = [(datetime.now() - timedelta(days=len(history) - i)).strftime("%d %b") for i in range(len(history))]
+    color = "#4ade80" if history[-1] >= history[0] else "#f87171"
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=days, y=history, mode="lines+markers",
+        line=dict(color=color, width=2.5),
+        marker=dict(size=6, color=color),
+        fill="tozeroy",
+        fillcolor="rgba(74,222,128,0.08)" if color == "#4ade80" else "rgba(248,113,113,0.08)",
+        name=symbol,
+    ))
+    fig.update_layout(
+        height=220, margin=dict(l=10, r=10, t=30, b=10),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#94a3b8", size=11),
+        title=dict(text=f"{symbol} – 10-day price", font=dict(size=13, color="#e2e8f0")),
+        xaxis=dict(showgrid=False, zeroline=False),
+        yaxis=dict(showgrid=True, gridcolor="#1e293b", zeroline=False),
+        showlegend=False,
+    )
+    return fig
+
+
+def make_confidence_bars(agents):
+    if not HAS_PLOTLY:
+        return None
+    names = [a.agent_name.replace("Agent", "") for a in agents]
+    confs = [a.confidence * 100 for a in agents]
+    colors = []
+    for a in agents:
+        if a.signal.value == "bullish":
+            colors.append("#4ade80")
+        elif a.signal.value == "bearish":
+            colors.append("#f87171")
+        elif a.signal.value == "mixed":
+            colors.append("#a78bfa")
+        else:
+            colors.append("#fbbf24")
+    fig = go.Figure(go.Bar(
+        x=confs, y=names, orientation="h",
+        marker=dict(color=colors, line=dict(width=0)),
+        text=[f"{c:.0f}%" for c in confs],
+        textposition="inside",
+        insidetextanchor="middle",
+        textfont=dict(color="#0f172a", size=12),
+    ))
+    fig.update_layout(
+        height=180, margin=dict(l=10, r=10, t=30, b=10),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#94a3b8", size=11),
+        title=dict(text="Agent Confidence", font=dict(size=13, color="#e2e8f0")),
+        xaxis=dict(range=[0, 100], showgrid=True, gridcolor="#1e293b", ticksuffix="%"),
+        yaxis=dict(showgrid=False),
+    )
+    return fig
+
+
+def make_latency_bars(metrics):
+    if not HAS_PLOTLY or not metrics.agent_latencies:
+        return None
+    names = list(metrics.agent_latencies.keys())
+    vals = list(metrics.agent_latencies.values())
+    fig = go.Figure(go.Bar(
+        x=names, y=vals,
+        marker=dict(color="#38bdf8", line=dict(width=0)),
+        text=[f"{v:.0f} ms" for v in vals],
+        textposition="outside",
+        textfont=dict(color="#94a3b8", size=11),
+    ))
+    fig.update_layout(
+        height=200, margin=dict(l=10, r=10, t=30, b=10),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#94a3b8", size=11),
+        title=dict(text="Agent Latency (ms)", font=dict(size=13, color="#e2e8f0")),
+        xaxis=dict(showgrid=False),
+        yaxis=dict(showgrid=True, gridcolor="#1e293b"),
+        showlegend=False,
+    )
+    return fig
+
+
+def make_portfolio_pie(user):
+    if not HAS_PLOTLY or not user.portfolio:
+        return None
+    labels = []
+    values = []
+    for p in user.portfolio:
+        labels.append(p.symbol.replace(".NS", ""))
+        values.append(p.quantity * (p.current_price or p.avg_cost))
+    fig = go.Figure(go.Pie(
+        labels=labels, values=values,
+        hole=0.55,
+        marker=dict(colors=["#38bdf8", "#4ade80", "#a78bfa", "#fbbf24", "#f87171"]),
+        textinfo="label+percent",
+        textfont=dict(size=11, color="#e2e8f0"),
+    ))
+    fig.update_layout(
+        height=230, margin=dict(l=10, r=10, t=30, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#94a3b8", size=11),
+        title=dict(text="Portfolio Allocation", font=dict(size=13, color="#e2e8f0")),
+        showlegend=False,
+    )
+    return fig
+
+
+def make_gauge(confidence: float, signal: str):
+    if not HAS_PLOTLY:
+        return None
+    color = {"bullish": "#4ade80", "bearish": "#f87171", "mixed": "#a78bfa"}.get(signal, "#fbbf24")
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=confidence * 100,
+        number=dict(suffix="%", font=dict(size=28, color="#e2e8f0")),
+        gauge=dict(
+            axis=dict(range=[0, 100], tickwidth=1, tickcolor="#334155"),
+            bar=dict(color=color),
+            bgcolor="#0f172a",
+            borderwidth=0,
+            steps=[
+                dict(range=[0, 40], color="#1e293b"),
+                dict(range=[40, 70], color="#334155"),
+                dict(range=[70, 100], color="#475569"),
+            ],
+        ),
+        title=dict(text="Consensus Confidence", font=dict(size=13, color="#94a3b8")),
+    ))
+    fig.update_layout(
+        height=200, margin=dict(l=20, r=20, t=40, b=10),
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    return fig
+
+
+def log_line(kind: str, msg: str) -> str:
+    ts = datetime.now().strftime("%H:%M:%S")
+    cls = {"ok": "console-ok", "warn": "console-warn", "err": "console-err", "info": "console-info"}.get(kind, "console-dim")
+    return f'<span class="console-dim">[{ts}]</span> <span class="{cls}">{msg}</span>'
+
+
 def main():
-    st.title("📈 VibeFinance")
-    st.caption("Multi-Agent Autonomous Financial Intelligence for Retail Investors")
+    st.markdown("## 📈 VibeFinance")
+    st.caption("Multi-Agent Autonomous Financial Intelligence  ·  Live agent console · RAG · Personalization")
 
     pipeline = get_pipeline()
     profiles = get_demo_profiles()
 
     # ── Sidebar ──────────────────────────────────────────────
     with st.sidebar:
-        st.header("⚙️ Configuration")
+        st.markdown("### ⚙️ Control Panel")
         profile_key = st.selectbox(
             "Investor Profile",
             options=list(profiles.keys()),
-            format_func=lambda k: f"{profiles[k].name} ({k})",
+            format_func=lambda k: f"{profiles[k].name}  ·  {k}",
         )
         user = profiles[profile_key]
 
@@ -73,38 +273,90 @@ def main():
             options=["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS"],
         )
 
-        st.divider()
-        st.subheader("🧪 Failure Simulation")
-        force_rag_fail = st.checkbox("Simulate missing filings (RAG failure)", value=False)
-        force_mkt_fail = st.checkbox("Simulate unavailable price feed", value=False)
+        st.markdown("---")
+        st.markdown("### 🧪 Failure Injection")
+        force_rag_fail = st.checkbox("Missing filings (RAG fail)", value=False)
+        force_mkt_fail = st.checkbox("Price feed down", value=False)
 
-        run_btn = st.button("🚀 Run Analysis", type="primary", use_container_width=True)
+        st.markdown("---")
+        run_btn = st.button("🚀  RUN MULTI-AGENT ANALYSIS", type="primary", use_container_width=True)
 
-        st.divider()
-        st.markdown("**User Snapshot**")
-        st.write(f"**Risk:** {user.risk_tolerance}")
-        st.write(f"**Horizon:** {user.investment_horizon}")
-        st.write(f"**Max position:** {user.max_position_pct:.0%}")
+        st.markdown("---")
+        st.markdown(f"**{user.name}**")
+        st.markdown(f"Risk · `{user.risk_tolerance}`  ·  Horizon · `{user.investment_horizon}`")
+        st.markdown(f"Max position · `{user.max_position_pct:.0%}`")
         if user.behavioral_notes:
-            st.caption("Behavioral notes:")
             for n in user.behavioral_notes:
                 st.caption(f"• {n}")
 
-    # ── Main area ────────────────────────────────────────────
+    # ── Landing state ────────────────────────────────────────
     if not run_btn:
-        st.info("Select a profile & symbol, then click **Run Analysis** to see the full multi-agent pipeline.")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.markdown("""
+            <div class="kpi"><div class="kpi-label">Agents</div>
+            <div class="kpi-value">3 Parallel</div></div>
+            """, unsafe_allow_html=True)
+        with c2:
+            st.markdown("""
+            <div class="kpi"><div class="kpi-label">Dimensions</div>
+            <div class="kpi-value">Momentum · Sentiment · RAG</div></div>
+            """, unsafe_allow_html=True)
+        with c3:
+            st.markdown("""
+            <div class="kpi"><div class="kpi-label">Personalization</div>
+            <div class="kpi-value">Risk-aware</div></div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("")
+        st.info("Select a profile & symbol, then hit **RUN MULTI-AGENT ANALYSIS** to watch agents execute live.")
         st.markdown("""
-        ### What this demo shows
-        1. **Multi-dimensional signals** – Momentum, Sentiment, Fundamental (RAG)
-        2. **Parallel specialized agents** with structured outputs
-        3. **Retrieval-augmented analysis** with visible citations
-        4. **Personalization** – same market data → different advice by risk profile
-        5. **Graceful degradation** when data is missing
-        6. **Session metrics** – latency, risk concentration, citation count
+        **What you will see**
+        - Live agent status console with timestamps  
+        - Price chart + technical snapshot  
+        - Per-agent signal cards with confidence  
+        - RAG citations from synthetic SEBI / earnings docs  
+        - Personalized recommendation that changes with risk profile  
+        - Latency, confidence & portfolio charts  
         """)
         return
 
-    with st.spinner("Running parallel agents + synthesis..."):
+    # ── Live console + staged execution ──────────────────────
+    st.markdown("### 🖥️ Agent Console")
+    console_placeholder = st.empty()
+    logs = []
+
+    def refresh_console():
+        html = '<div class="console-box">' + "<br>".join(logs) + "</div>"
+        console_placeholder.markdown(html, unsafe_allow_html=True)
+
+    logs.append(log_line("info", f"Session started · user={user.name} · symbol={symbol}"))
+    logs.append(log_line("info", "Loading market snapshot + sentiment feed..."))
+    refresh_console()
+    time.sleep(0.35)
+
+    if force_mkt_fail:
+        logs.append(log_line("warn", "Price feed UNAVAILABLE – MomentumAgent will degrade"))
+    else:
+        logs.append(log_line("ok", "Market data loaded"))
+    if force_rag_fail:
+        logs.append(log_line("warn", "Filings feed DISABLED – FundamentalAgent will degrade"))
+    else:
+        logs.append(log_line("ok", "Document corpus ready (RAG)"))
+    refresh_console()
+    time.sleep(0.25)
+
+    logs.append(log_line("info", "Dispatching 3 specialized agents in parallel..."))
+    refresh_console()
+    time.sleep(0.4)
+
+    agent_names = ["MomentumAgent", "SentimentAgent", "FundamentalAgent"]
+    for name in agent_names:
+        logs.append(log_line("info", f"→ {name} started"))
+        refresh_console()
+        time.sleep(0.25)
+
+    with st.spinner("Agents reasoning..."):
         result = asyncio.run(
             pipeline.run(
                 symbol=symbol,
@@ -119,39 +371,87 @@ def main():
     metrics = result["metrics"]
     mkt = result["market_data"]
 
-    # ── Top metrics row ──────────────────────────────────────
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Overall Signal", insight.overall_signal.value.upper())
-    c2.metric("Confidence", f"{insight.confidence:.0%}")
-    c3.metric("Total Latency", f"{result['total_latency_ms']:.0f} ms")
-    c4.metric("Risk Concentration (HHI)", f"{insight.risk_concentration_score or 0:.3f}")
-    c5.metric("Citations", metrics.num_citations)
+    for a in agents:
+        status = a.status.value
+        if status == "degraded":
+            logs.append(log_line("warn", f"✓ {a.agent_name} finished · DEGRADED · {a.signal.value.upper()} ({a.confidence:.0%}) · {a.latency_ms:.0f} ms"))
+        else:
+            logs.append(log_line("ok", f"✓ {a.agent_name} finished · {a.signal.value.upper()} ({a.confidence:.0%}) · {a.latency_ms:.0f} ms"))
+        refresh_console()
+        time.sleep(0.15)
 
-    st.divider()
+    logs.append(log_line("info", "SynthesisAgent merging outputs + applying personalization..."))
+    refresh_console()
+    time.sleep(0.3)
+    logs.append(log_line("ok", f"Consensus → {insight.overall_signal.value.upper()} · confidence {insight.confidence:.0%} · total {result['total_latency_ms']:.0f} ms"))
+    logs.append(log_line("info", f"Citations attached: {len(insight.citations)} · Risk HHI: {insight.risk_concentration_score or 0:.3f}"))
+    logs.append(log_line("ok", "Pipeline complete. Rendering dashboard..."))
+    refresh_console()
 
-    # ── Market snapshot ──────────────────────────────────────
-    st.subheader(f"📊 Market Snapshot – {symbol}")
-    if mkt:
-        mc1, mc2, mc3, mc4 = st.columns(4)
-        mc1.metric("Last Price", f"₹{mkt.get('last_price', 0):,.2f}", f"{mkt.get('change_1d_pct', 0):+.2f}%")
-        mc2.metric("5d Momentum", f"{mkt.get('momentum_5d_pct', 0):+.2f}%")
-        mc3.metric("RSI(14)", f"{mkt.get('rsi_14', 0):.1f}")
-        mc4.metric("Volume Ratio", f"{mkt.get('volume_ratio', 0):.2f}x")
-    else:
-        st.warning("⚠️ Price feed unavailable (degraded mode)")
+    st.markdown("---")
 
-    st.divider()
+    # ── KPI row ──────────────────────────────────────────────
+    k1, k2, k3, k4, k5 = st.columns(5)
+    with k1:
+        st.markdown(f"""
+        <div class="kpi"><div class="kpi-label">Overall Signal</div>
+        <div class="kpi-value"><span class="{signal_class(insight.overall_signal.value)}">{signal_emoji(insight.overall_signal.value)} {insight.overall_signal.value.upper()}</span></div></div>
+        """, unsafe_allow_html=True)
+    with k2:
+        st.markdown(f"""
+        <div class="kpi"><div class="kpi-label">Confidence</div>
+        <div class="kpi-value">{insight.confidence:.0%}</div></div>
+        """, unsafe_allow_html=True)
+    with k3:
+        st.markdown(f"""
+        <div class="kpi"><div class="kpi-label">Total Latency</div>
+        <div class="kpi-value">{result['total_latency_ms']:.0f} ms</div></div>
+        """, unsafe_allow_html=True)
+    with k4:
+        st.markdown(f"""
+        <div class="kpi"><div class="kpi-label">Risk HHI</div>
+        <div class="kpi-value">{insight.risk_concentration_score or 0:.3f}</div></div>
+        """, unsafe_allow_html=True)
+    with k5:
+        st.markdown(f"""
+        <div class="kpi"><div class="kpi-label">Citations</div>
+        <div class="kpi-value">{metrics.num_citations}</div></div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("")
+
+    # ── Charts row ───────────────────────────────────────────
+    left, right = st.columns([1.4, 1])
+    with left:
+        history = get_price_history(symbol)
+        fig_price = make_price_chart(symbol, history)
+        if fig_price:
+            st.plotly_chart(fig_price, use_container_width=True)
+        if mkt:
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            mc1.metric("Last", f"₹{mkt.get('last_price', 0):,.2f}", f"{mkt.get('change_1d_pct', 0):+.2f}%")
+            mc2.metric("5d Mom", f"{mkt.get('momentum_5d_pct', 0):+.2f}%")
+            mc3.metric("RSI(14)", f"{mkt.get('rsi_14', 0):.1f}")
+            mc4.metric("Vol Ratio", f"{mkt.get('volume_ratio', 0):.2f}x")
+        else:
+            st.warning("Price feed unavailable (degraded)")
+    with right:
+        fig_gauge = make_gauge(insight.confidence, insight.overall_signal.value)
+        if fig_gauge:
+            st.plotly_chart(fig_gauge, use_container_width=True)
+
+    st.markdown("---")
 
     # ── Agent cards ──────────────────────────────────────────
-    st.subheader("🤖 Multi-Agent Analysis (Parallel)")
+    st.markdown("### 🤖 Agent Results")
     cols = st.columns(len(agents))
     for col, agent in zip(cols, agents):
         with col:
             status_icon = "⚠️" if agent.status.value == "degraded" else "✅"
             st.markdown(f"**{status_icon} {agent.agent_name}**")
             st.markdown(
-                f"<span class='{signal_color(agent.signal.value)}'>{agent.signal.value.upper()}</span> "
-                f"· conf {agent.confidence:.0%} · {agent.latency_ms:.0f} ms",
+                f"<span class='{signal_class(agent.signal.value)}'>{agent.signal.value.upper()}</span>"
+                f" &nbsp;·&nbsp; {agent.confidence:.0%} &nbsp;·&nbsp; {agent.latency_ms:.0f} ms",
                 unsafe_allow_html=True,
             )
             st.caption(agent.dimension)
@@ -164,16 +464,26 @@ def main():
                 with st.expander(f"Citations ({len(agent.citations)})"):
                     for c in agent.citations:
                         st.markdown(
-                            f"<div class='citation'><b>{c.title}</b> (score={c.relevance_score:.2f})<br>"
+                            f"<div class='citation'><b>{c.title}</b> · score {c.relevance_score:.2f}<br>"
                             f"<i>{c.excerpt}</i></div>",
                             unsafe_allow_html=True,
                         )
 
-    st.divider()
+    ch1, ch2 = st.columns(2)
+    with ch1:
+        fig_conf = make_confidence_bars(agents)
+        if fig_conf:
+            st.plotly_chart(fig_conf, use_container_width=True)
+    with ch2:
+        fig_lat = make_latency_bars(metrics)
+        if fig_lat:
+            st.plotly_chart(fig_lat, use_container_width=True)
+
+    st.markdown("---")
 
     # ── Synthesis ────────────────────────────────────────────
-    st.subheader("🧠 Synthesized Intelligence (Personalized)")
-    st.markdown(f"**For:** {insight.personalized_for}")
+    st.markdown("### 🧠 Synthesized Intelligence")
+    st.markdown(f"**Personalized for:** {insight.personalized_for}")
     st.markdown(f"**Summary:** {insight.summary}")
 
     st.markdown("#### Recommendations")
@@ -194,44 +504,37 @@ def main():
     if insight.citations:
         with st.expander("📚 All Source Attributions"):
             for c in insight.citations:
-                st.markdown(f"**{c.title}** · relevance {c.relevance_score:.2f} · {c.page_or_section}")
-                st.caption(c.excerpt)
+                st.markdown(
+                    f"<div class='citation'><b>{c.title}</b> · {c.page_or_section} · relevance {c.relevance_score:.2f}<br>"
+                    f"{c.excerpt}</div>",
+                    unsafe_allow_html=True,
+                )
 
-    st.divider()
+    st.markdown("---")
 
-    # ── Portfolio & Watchlist ────────────────────────────────
-    st.subheader("💼 Current Portfolio & Watchlist")
-    pc1, pc2 = st.columns(2)
-    with pc1:
-        st.markdown("**Holdings**")
-        if user.portfolio:
-            for p in user.portfolio:
-                val = p.quantity * (p.current_price or p.avg_cost)
-                st.write(f"• {p.symbol}: {p.quantity} shares @ ₹{p.avg_cost:.0f} → ₹{val:,.0f} ({p.sector})")
-        else:
-            st.write("Empty")
-    with pc2:
+    # ── Portfolio + metrics ──────────────────────────────────
+    p1, p2 = st.columns([1, 1.2])
+    with p1:
+        st.markdown("### 💼 Portfolio")
+        fig_pie = make_portfolio_pie(user)
+        if fig_pie:
+            st.plotly_chart(fig_pie, use_container_width=True)
+        for p in user.portfolio:
+            val = p.quantity * (p.current_price or p.avg_cost)
+            st.write(f"• **{p.symbol}** · {p.quantity} sh · ₹{val:,.0f} · {p.sector}")
         st.markdown("**Watchlist**")
-        for w in user.watchlist:
-            st.write(f"• {w}")
-
-    st.divider()
-
-    # ── Metrics panel ────────────────────────────────────────
-    st.subheader("📏 Session Metrics")
-    mcol1, mcol2, mcol3 = st.columns(3)
-    mcol1.write("**Agent Latencies (ms)**")
-    for name, lat in metrics.agent_latencies.items():
-        mcol1.write(f"• {name}: {lat:.0f}")
-    mcol2.metric("Signal Accuracy Proxy", f"{metrics.signal_accuracy_proxy:.1%}" if metrics.signal_accuracy_proxy else "N/A")
-    mcol3.write("**Degraded Agents**")
-    if metrics.degraded_agents:
-        for d in metrics.degraded_agents:
-            mcol3.error(d)
-    else:
-        mcol3.success("None")
-
-    st.caption(f"Session ID: {metrics.session_id} · Logged to data/metrics/sessions.jsonl")
+        st.write(", ".join(user.watchlist) if user.watchlist else "—")
+    with p2:
+        st.markdown("### 📏 Session Metrics")
+        st.write("**Agent latencies**")
+        for name, lat in metrics.agent_latencies.items():
+            st.write(f"• {name}: **{lat:.0f} ms**")
+        st.metric("Signal accuracy proxy", f"{metrics.signal_accuracy_proxy:.1%}" if metrics.signal_accuracy_proxy else "N/A")
+        if metrics.degraded_agents:
+            st.error("Degraded: " + ", ".join(metrics.degraded_agents))
+        else:
+            st.success("All agents healthy")
+        st.caption(f"Session `{metrics.session_id}` · logged to data/metrics/sessions.jsonl")
 
 
 if __name__ == "__main__":
