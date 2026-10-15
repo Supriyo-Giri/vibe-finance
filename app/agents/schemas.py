@@ -54,7 +54,7 @@ class UserProfile(BaseModel):
     user_id: str
     name: str
     risk_tolerance: Literal["conservative", "moderate", "aggressive"]
-    investment_horizon: Literal["short", "medium", "long"]  # <1y, 1-3y, >3y
+    investment_horizon: Literal["short", "medium", "long"]
     max_position_pct: float = 0.15
     preferred_sectors: List[str] = Field(default_factory=list)
     avoided_sectors: List[str] = Field(default_factory=list)
@@ -85,7 +85,7 @@ class SessionMetrics(BaseModel):
     agent_latencies: Dict[str, float]
     total_latency_ms: float
     risk_concentration_score: float
-    signal_accuracy_proxy: Optional[float] = None  # simulated
+    signal_accuracy_proxy: Optional[float] = None
     num_citations: int
     degraded_agents: List[str] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=datetime.utcnow)
