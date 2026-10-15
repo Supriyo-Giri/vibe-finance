@@ -201,13 +201,18 @@ class SynthesisAgent(BaseAgent):
             for o in agent_outputs
             if o.status.value != "failed"
         ]
-        mock = MockLLM.synthesize(signal_dicts, user.risk_tolerance)
+        mock = MockLLM.synthesize(
+            signal_dicts,
+            user.risk_tolerance,
+            symbol=symbol,
+            agents_detail=signal_dicts,
+        )
         overall = SignalLabel(mock["overall_signal"])
         conf = mock["confidence"]
 
         lines = [
             f"**Multi-Agent Consensus for {symbol}**",
-            f"User profile: {user.name} ({user.risk_tolerance} risk, {user.investment_horizon} horizon)",
+            f"Investor: {user.name} · {user.risk_tolerance} risk · {user.investment_horizon} horizon",
             "",
             "### Individual Agent Views",
         ]
@@ -217,16 +222,15 @@ class SynthesisAgent(BaseAgent):
                 f"- **{o.agent_name}** ({o.dimension}): {o.signal.value.upper()} "
                 f"(conf={o.confidence:.0%}){status_flag}"
             )
-            lines.append(f"  Reasoning: {o.reasoning}")
+            lines.append(f"  {o.reasoning}")
             if o.evidence:
                 lines.append(f"  Evidence: {'; '.join(o.evidence[:2])}")
             lines.append("")
 
         lines.append("### Synthesis")
         lines.append(mock["summary"])
-        lines.append(mock["size_language"])
         lines.append("")
-        lines.append(f"**Risk note for {user.risk_tolerance} profile:** {mock['risk_warning']}")
+        lines.append(f"**Risk note:** {mock['risk_warning']}")
 
         portfolio_impact = None
         risk_score = 0.0
@@ -246,51 +250,41 @@ class SynthesisAgent(BaseAgent):
                     None,
                 )
                 if holding:
+                    w = holding.quantity * (holding.current_price or holding.avg_cost) / total_value
                     portfolio_impact = (
-                        f"You already hold {holding.quantity} shares of {holding.symbol}. "
-                        f"Current weight ≈ "
-                        f"{(holding.quantity * (holding.current_price or holding.avg_cost) / total_value):.1%}."
+                        f"You already own {holding.quantity:.0f} shares of {holding.symbol.replace('.NS','')} "
+                        f"(≈{w:.1%} of portfolio). Adding more would push single-name concentration higher."
                     )
                 else:
                     portfolio_impact = (
-                        f"No current holding in {symbol}. "
-                        f"Adding it would change concentration (current HHI={risk_score:.3f})."
+                        f"You do not currently hold {symbol.replace('.NS','')}. "
+                        f"Current portfolio concentration (HHI) is {risk_score:.3f}."
                     )
 
         all_citations: List[Citation] = []
         for o in agent_outputs:
             all_citations.extend(o.citations)
 
-        recommendations = []
-        if overall == SignalLabel.BULLISH:
-            recommendations.append(mock["size_language"])
-            recommendations.append("Monitor volume confirmation and any upcoming earnings date.")
-        elif overall == SignalLabel.BEARISH:
-            recommendations.append("Reduce exposure or avoid new long positions until clarity improves.")
-            recommendations.append("Set strict stop-loss if already holding.")
-        else:
-            recommendations.append(mock["size_language"])
-            if user.risk_tolerance == "conservative":
-                recommendations.append("Prefer waiting for clearer multi-agent alignment before acting.")
-            elif user.risk_tolerance == "aggressive":
-                recommendations.append(
-                    "You may take a small tactical position while keeping strict risk controls."
-                )
-            else:
-                recommendations.append(
-                    "Wait for alignment across technical, sentiment and fundamental agents."
-                )
-
+        recommendations = mock.get("recommendations", [])
         risk_warnings = [mock["risk_warning"]]
-        if risk_score > 0.25:
+        if risk_score > 0.28:
             risk_warnings.append(
-                f"Portfolio concentration is elevated (HHI={risk_score:.3f}). Diversification recommended."
+                f"Portfolio is concentrated (HHI={risk_score:.3f}). "
+                f"Any new position in {symbol.replace('.NS','')} should be sized carefully to avoid further clustering."
             )
         degraded = [o.agent_name for o in agent_outputs if o.status.value == "degraded"]
         if degraded:
             risk_warnings.append(
-                f"Some agents ran in degraded mode: {', '.join(degraded)}. Treat conclusions with extra caution."
+                f"Note: {', '.join(degraded)} ran in degraded mode. Treat the overall view with extra caution."
             )
+
+        if user.behavioral_notes and overall == SignalLabel.BULLISH:
+            note = user.behavioral_notes[0]
+            if "sold winners" in note.lower() or "early" in note.lower():
+                recommendations.append(
+                    "Reminder from your own history: you tend to exit winners early. "
+                    "Decide the profit-taking plan before entry."
+                )
 
         return SynthesizedInsight(
             overall_signal=overall,

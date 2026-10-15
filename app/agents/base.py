@@ -2,10 +2,8 @@
 Base agent class with common utilities
 """
 from abc import ABC, abstractmethod
-import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 from app.agents.schemas import AgentOutput, AgentStatus, SignalLabel
-from app.config import settings
 
 
 class BaseAgent(ABC):
@@ -17,7 +15,6 @@ class BaseAgent(ABC):
 
     @abstractmethod
     async def run(self, context: Dict[str, Any]) -> AgentOutput:
-        """Execute the agent and return structured output."""
         pass
 
     def _make_output(
@@ -59,7 +56,7 @@ class MockLLM:
     """Deterministic mock LLM for offline demo (no API key required)."""
 
     @staticmethod
-    def classify_momentum(rsi: float, momentum_pct: float, volume_ratio: float) -> tuple[SignalLabel, float, str]:
+    def classify_momentum(rsi: float, momentum_pct: float, volume_ratio: float):
         if rsi > 70 and momentum_pct > 3:
             return SignalLabel.BEARISH, 0.72, f"Overbought conditions (RSI={rsi:.1f}) with strong recent momentum ({momentum_pct:.1f}%)."
         if rsi < 30 and momentum_pct < -3:
@@ -71,7 +68,7 @@ class MockLLM:
         return SignalLabel.NEUTRAL, 0.55, f"Mixed technicals: RSI={rsi:.1f}, momentum={momentum_pct:.1f}%, volume ratio={volume_ratio:.1f}."
 
     @staticmethod
-    def classify_sentiment(pos: float, neg: float, neu: float) -> tuple[SignalLabel, float, str]:
+    def classify_sentiment(pos: float, neg: float, neu: float):
         score = pos - neg
         if score > 0.25:
             return SignalLabel.BULLISH, min(0.85, 0.5 + score), f"Positive sentiment dominant (pos={pos:.2f}, neg={neg:.2f})."
@@ -80,7 +77,7 @@ class MockLLM:
         return SignalLabel.NEUTRAL, 0.50, f"Balanced sentiment (pos={pos:.2f}, neg={neg:.2f}, neu={neu:.2f})."
 
     @staticmethod
-    def synthesize(agent_signals: list[dict], risk: str) -> dict:
+    def synthesize(agent_signals: list[dict], risk: str, symbol: str = "", agents_detail: list = None) -> dict:
         bull = sum(1 for a in agent_signals if a["signal"] == "bullish")
         bear = sum(1 for a in agent_signals if a["signal"] == "bearish")
         avg_conf = sum(a["confidence"] for a in agent_signals) / max(1, len(agent_signals))
@@ -92,22 +89,101 @@ class MockLLM:
         else:
             overall = "mixed" if bull != bear else "neutral"
 
-        # Personalization
-        if risk == "conservative":
-            size_lang = "Consider a small starter position (≤3% of portfolio) only if conviction is high."
-            warn = "Prioritize capital preservation. Wait for clearer confirmation."
-        elif risk == "aggressive":
-            size_lang = "You may allocate up to your max position size if risk controls allow."
-            warn = "Higher risk tolerance allows larger sizing, but respect stop-loss discipline."
-        else:
-            size_lang = "A moderate allocation (4-7% of portfolio) is appropriate if other factors align."
-            warn = "Balance growth and downside protection."
+        agents_detail = agents_detail or []
+        tech = next((a for a in agents_detail if "Momentum" in a.get("agent", "")), None)
+        sent = next((a for a in agents_detail if "Sentiment" in a.get("agent", "")), None)
+        fund = next((a for a in agents_detail if "Fundamental" in a.get("agent", "")), None)
 
-        summary = f"Multi-agent consensus is {overall.upper()} with average confidence {avg_conf:.0%}."
+        parts = []
+        if tech:
+            parts.append(f"Technicals are {tech['signal']} (conf {tech['confidence']:.0%})")
+        if sent:
+            parts.append(f"news sentiment is {sent['signal']}")
+        if fund:
+            parts.append(f"filings lean {fund['signal']}")
+        view_str = ", ".join(parts) if parts else "mixed signals across agents"
+
+        if overall == "bullish":
+            summary = (
+                f"The multi-agent view on {symbol or 'this stock'} is constructive. "
+                f"{view_str.capitalize()}. Overall confidence sits at {avg_conf:.0%}."
+            )
+        elif overall == "bearish":
+            summary = (
+                f"Agents are pointing to caution on {symbol or 'this name'}. "
+                f"{view_str.capitalize()}. Consensus confidence is {avg_conf:.0%}."
+            )
+        else:
+            summary = (
+                f"No clear directional consensus on {symbol or 'this stock'} yet. "
+                f"{view_str.capitalize()}. Average confidence {avg_conf:.0%} — better to wait for alignment."
+            )
+
+        if risk == "conservative":
+            if overall == "bullish":
+                recs = [
+                    "Given your capital-preservation focus, only a small starter position (max 3–4% of portfolio) makes sense even with the constructive view.",
+                    "Prefer waiting for a pullback or clearer volume confirmation before adding.",
+                    "Set a tight mental stop; you have historically sold winners early — plan the exit in advance.",
+                ]
+                warn = "Your conservative mandate means missing some upside is preferable to large drawdowns. Stay patient."
+            elif overall == "bearish":
+                recs = [
+                    "Avoid initiating or adding to this position while the multi-agent view remains negative.",
+                    "If already held, consider trimming to keep single-name risk well below your comfort threshold.",
+                ]
+                warn = "Capital protection comes first. There is no urgency to act on the short side either."
+            else:
+                recs = [
+                    "With mixed signals and your conservative profile, the highest-conviction action is to do nothing for now.",
+                    "Revisit only when at least two agents align and confidence exceeds ~65%.",
+                ]
+                warn = "Sitting in cash or existing holdings is a valid decision when clarity is low."
+        elif risk == "aggressive":
+            if overall == "bullish":
+                recs = [
+                    "Your higher risk tolerance allows a meaningful allocation (up to your stated max position size) provided you define risk levels first.",
+                    "Consider scaling in over 2–3 tranches rather than all at once, especially if volume is still building.",
+                    "Keep a clear invalidation level — aggressive sizing still needs disciplined exits.",
+                ]
+                warn = "Larger size is acceptable for you, but position sizing without a stop is still gambling."
+            elif overall == "bearish":
+                recs = [
+                    "Even with aggressive tolerance, fighting a multi-agent bearish consensus is low-odds. Reduce or avoid new longs.",
+                    "If you want to express a short-term view, keep size modest and time-stop the idea within a few sessions.",
+                ]
+                warn = "High risk tolerance is not a licence to ignore deteriorating technicals and sentiment."
+            else:
+                recs = [
+                    "Mixed signals give you room for a small tactical probe (2–4%), but treat it as a test, not a core holding.",
+                    "Define both upside target and hard stop before entry; abandon quickly if agents stay split.",
+                ]
+                warn = "Your edge comes from size + speed of decision, not from forcing conviction where none exists."
+        else:  # moderate
+            if overall == "bullish":
+                recs = [
+                    "A measured 5–8% allocation is consistent with your moderate profile if the technical and fundamental agents stay supportive.",
+                    "Scale in gradually and keep an eye on any shift in news sentiment.",
+                    "Review the position after the next major data point (earnings or macro print).",
+                ]
+                warn = "Balance remains the key word — neither maximum aggression nor excessive caution."
+            elif overall == "bearish":
+                recs = [
+                    "Stay on the sidelines for new capital. Existing exposure can be reduced toward your lower comfort band.",
+                    "Use any short-term bounce as an opportunity to lighten rather than add.",
+                ]
+                warn = "Moderate investors do best by avoiding the need to be heroic on either side."
+            else:
+                recs = [
+                    "No strong edge right now. Maintain current holdings and wait for clearer multi-agent alignment.",
+                    "A small watchlist alert on volume or RSI extremes is more useful than forcing a trade.",
+                ]
+                warn = "Patience is a position. Mixed readings rarely reward urgency."
+
         return {
             "overall_signal": overall,
             "confidence": round(avg_conf, 2),
             "summary": summary,
-            "size_language": size_lang,
+            "recommendations": recs,
             "risk_warning": warn,
         }

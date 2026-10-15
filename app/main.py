@@ -386,6 +386,19 @@ def main():
         force_rag_fail = st.checkbox("Missing filings (RAG fail)", value=False)
         force_mkt_fail = st.checkbox("Price feed down", value=False)
         st.markdown("---")
+        def main():
+            st.markdown("""
+                <style>
+                section[data-testid="stSidebar"] div.stButton > button[kind="primary"] {
+                    color: black !important;
+                }
+                </style>
+            """, unsafe_allow_html=True)
+
+            st.markdown("## VibeFinance")
+            st.caption("Multi-agent autonomous financial intelligence · Real market data · RAG · Personalization")
+
+        # Keep the rest of your existing code unchanged
         run_btn = st.button("RUN MULTI-AGENT ANALYSIS", type="primary", use_container_width=True)
         st.markdown("---")
         st.markdown(f"**{user.name}**")
