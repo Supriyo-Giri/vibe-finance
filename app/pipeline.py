@@ -1,5 +1,5 @@
 """
-End-to-end orchestration: data → parallel agents → synthesis → metrics
+End-to-end orchestration: real data → parallel agents → synthesis → metrics
 """
 import asyncio
 import time
@@ -29,16 +29,20 @@ class VibeFinancePipeline:
         user: UserProfile,
         force_rag_failure: bool = False,
         force_market_failure: bool = False,
+        use_live: bool = True,
     ) -> Dict[str, Any]:
-        """
-        Full pipeline from raw data → multi-agent → personalized insight
-        """
         t0 = time.perf_counter()
 
-        # 1. Ingest data
-        market_data = {} if force_market_failure else get_market_snapshot([symbol])
-        sentiment_data = get_sentiment_snapshot([symbol])
-        company_name = get_company_name(symbol)
+        if force_market_failure:
+            market_data = {}
+        else:
+            market_data = get_market_snapshot([symbol], use_live=use_live)
+
+        sentiment_data = get_sentiment_snapshot([symbol], market_data=market_data)
+        company_name = (
+            market_data.get(symbol, {}).get("company_name")
+            or get_company_name(symbol)
+        )
 
         context = {
             "symbol": symbol,
@@ -49,7 +53,6 @@ class VibeFinancePipeline:
             "user": user,
         }
 
-        # 2. Run specialized agents in parallel
         results = await asyncio.gather(
             self.momentum.run(context),
             self.sentiment.run(context),
@@ -60,11 +63,10 @@ class VibeFinancePipeline:
         agent_outputs: list[AgentOutput] = []
         for r in results:
             if isinstance(r, Exception):
-                print(f"[WARN] Agent raised exception: {r}")
+                print(f"[WARN] Agent exception: {r}")
                 continue
             agent_outputs.append(r)
 
-        # 3. Synthesis + personalization
         insight = None
         try:
             insight = await self.synthesis.synthesize(
@@ -75,14 +77,13 @@ class VibeFinancePipeline:
             )
         except Exception as e:
             print(f"[ERROR] Synthesis failed: {e}")
-            # Create a minimal fallback insight so the pipeline never returns None
             insight = SynthesizedInsight(
                 overall_signal=SignalLabel.NEUTRAL,
                 confidence=0.3,
-                summary="Synthesis failed – using neutral fallback.",
-                detailed_reasoning=f"Error during synthesis: {e}",
-                recommendations=["Unable to generate recommendation due to internal error."],
-                risk_warnings=["Treat this output with caution."],
+                summary="Synthesis failed – neutral fallback.",
+                detailed_reasoning=f"Error: {e}",
+                recommendations=["Unable to generate recommendation."],
+                risk_warnings=["Treat with caution."],
                 agent_outputs=agent_outputs,
                 citations=[],
                 personalized_for=f"{user.name} ({user.risk_tolerance})",
@@ -92,7 +93,6 @@ class VibeFinancePipeline:
 
         total_latency = (time.perf_counter() - t0) * 1000
 
-        # 4. Metrics
         session_metrics = self.metrics.log_session(
             user_id=user.user_id,
             symbol=symbol,
@@ -101,10 +101,12 @@ class VibeFinancePipeline:
             total_latency_ms=total_latency,
         )
 
+        mkt = market_data.get(symbol, {})
         return {
             "insight": insight,
             "agent_outputs": agent_outputs,
             "metrics": session_metrics,
-            "market_data": market_data.get(symbol, {}),
+            "market_data": mkt,
             "total_latency_ms": total_latency,
+            "data_source": mkt.get("source", "unknown"),
         }
